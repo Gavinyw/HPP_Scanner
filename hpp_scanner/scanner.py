@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs, urlencode
 import time
+import requests
 
 from .framework_detector import FrameworkDetector, Framework
 from .payload_generator import PayloadGenerator, PayloadType, ParameterLocation, HPPPayload
@@ -120,6 +121,9 @@ class HPPScanner:
         self.parameters_tested: List[str] = []
         self.scan_start_time: Optional[datetime] = None
         self.scan_end_time: Optional[datetime] = None
+
+        # Context tracking storage
+        self.workflow_responses: List[Dict] = []  # Store responses for context tracking
         
         # HTTP client placeholder (to be implemented with requests library)
         self._http_client = None
@@ -192,12 +196,37 @@ class HPPScanner:
             print(f"[+] Confidence: {self.framework_confidence * 100:.0f}%")
     
     def _get_framework_detection_data(self) -> Dict:
-        """Get response data for framework detection."""
-        # Placeholder - in real implementation, make actual HTTP requests
+        """
+        Get response data for framework detection by making real HTTP request.
+
+        Returns:
+            Dict with headers, body, cookies from actual server response
+        """
+        if self.config.verbose:
+            print(f"[*] Fetching {self.target_url} for framework fingerprinting...")
+
+        # Make actual GET request to target
+        response = self._make_request(self.target_url, 'GET', {})
+
+        # Check if request succeeded
+        if response.status_code == 0:
+            # Connection failed
+            if self.config.verbose:
+                print(f"[!] Failed to connect to {self.target_url}")
+                print(f"[!] {response.body}")
+            return {
+                'headers': {},
+                'body': '',
+                'cookies': {}
+            }
+
+        if self.config.verbose:
+            print(f"[+] Received response: {response.status_code} ({len(response.body)} bytes)")
+
         return {
-            'headers': {},
-            'body': '',
-            'cookies': {}
+            'headers': response.headers,
+            'body': response.body,
+            'cookies': response.cookies
         }
     
     def _discover_endpoints(self) -> List[Dict]:
@@ -220,22 +249,33 @@ class HPPScanner:
         url = endpoint.get('url', self.target_url)
         method = endpoint.get('method', 'GET')
         params = endpoint.get('params', {})
-        
+
         self.endpoints_tested.append(url)
-        
+
         if self.config.verbose:
             print(f"[*] Testing {method} {url}")
-        
+
+        # Make baseline request to store response for context tracking
+        baseline_response = self._make_request(url, method, params)
+
+        # Store response for context tracking
+        self.workflow_responses.append({
+            'url': url,
+            'method': method,
+            'params': params,
+            'response': baseline_response
+        })
+
         # Test each parameter
         for param_name, param_value in params.items():
             self.parameters_tested.append(param_name)
-            
+
             # Generate payloads for this parameter
             payloads = self.payload_generator.generate_payloads(
                 param_name,
                 location=ParameterLocation.QUERY if method == 'GET' else ParameterLocation.BODY
             )
-            
+
             # Test each payload
             for payload in payloads:
                 result = self._test_payload(url, method, params, payload)
@@ -294,30 +334,149 @@ class HPPScanner:
         
         return None
     
-    def _create_hpp_params(self, original_params: Dict, payload: HPPPayload) -> Dict:
-        """Create parameters with HPP injection."""
-        hpp_params = original_params.copy()
-        # In real implementation, would create list of tuples for duplicate params
-        # For now, just mark as modified
-        hpp_params[payload.param_name] = payload.values
-        return hpp_params
+    def _create_hpp_params(self, original_params: Dict, payload: HPPPayload):
+        """
+        Create parameters with HPP injection using list of tuples.
+
+        Python dicts cannot have duplicate keys, so we use list of tuples
+        to preserve duplicate parameters for HPP testing.
+
+        Args:
+            original_params: Original parameters as dict
+            payload: HPP payload with duplicate values
+
+        Returns:
+            List of (key, value) tuples with duplicates
+
+        Example:
+            original_params = {'id': '1', 'user': 'test'}
+            payload.param_name = 'role'
+            payload.values = ['user', 'admin']
+
+            Returns: [('id', '1'), ('user', 'test'), ('role', 'user'), ('role', 'admin')]
+            URL becomes: ?id=1&user=test&role=user&role=admin
+        """
+        # Convert original params to list of tuples, excluding the HPP target parameter
+        params_list = [(k, v) for k, v in original_params.items()
+                       if k != payload.param_name]
+
+        # Add duplicate parameters from payload
+        for value in payload.values:
+            params_list.append((payload.param_name, str(value)))
+
+        return params_list
     
-    def _make_request(self, url: str, method: str, params: Dict) -> ResponseData:
+    def _make_request(self, url: str, method: str, params) -> ResponseData:
         """
-        Make HTTP request.
-        
-        Note: In real implementation, use requests library.
-        This is a placeholder for demonstration.
+        Make actual HTTP request using requests library.
+
+        Args:
+            url: Target URL
+            method: HTTP method (GET, POST)
+            params: Parameters - can be Dict or List[Tuple] for duplicate params
+
+        Returns:
+            ResponseData with actual server response
         """
-        # Placeholder response - in real implementation, make actual request
-        return ResponseData(
-            status_code=200,
-            headers={'Content-Type': 'text/html'},
-            body='<html><body>Response</body></html>',
-            cookies={},
-            response_time=100.0,
-            url=url
-        )
+        start_time = time.time()
+
+        try:
+            # Prepare headers with user agent
+            headers = {
+                'User-Agent': self.config.user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            }
+
+            if method.upper() == 'GET':
+                # For HPP testing, we need to send duplicate parameters
+                # Standard dict doesn't support this, so we use list of tuples
+                if isinstance(params, list):
+                    # Manual query string construction for duplicate params
+                    # Example: [('id', '1'), ('id', '2')] -> "id=1&id=2"
+                    from urllib.parse import quote
+                    query_parts = [f"{quote(str(k))}={quote(str(v))}" for k, v in params]
+                    query = '&'.join(query_parts)
+                else:
+                    # Regular dict params
+                    from urllib.parse import urlencode
+                    query = urlencode(params) if params else ''
+
+                full_url = f"{url}?{query}" if query else url
+
+                if self.config.verbose:
+                    print(f"  [HTTP] GET {full_url}")
+
+                response = requests.get(
+                    full_url,
+                    timeout=self.config.timeout,
+                    allow_redirects=self.config.follow_redirects,
+                    headers=headers,
+                    verify=True  # SSL verification
+                )
+
+            elif method.upper() == 'POST':
+                if self.config.verbose:
+                    print(f"  [HTTP] POST {url}")
+
+                # POST supports duplicate params via list of tuples
+                response = requests.post(
+                    url,
+                    data=params,  # requests handles both dict and list of tuples
+                    timeout=self.config.timeout,
+                    allow_redirects=self.config.follow_redirects,
+                    headers=headers,
+                    verify=True
+                )
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+
+            # Calculate response time in milliseconds
+            response_time = (time.time() - start_time) * 1000
+
+            return ResponseData(
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                body=response.text,
+                cookies=dict(response.cookies),
+                response_time=response_time,
+                url=response.url
+            )
+
+        except requests.exceptions.Timeout:
+            if self.config.verbose:
+                print(f"  [ERROR] Timeout after {self.config.timeout}s")
+            return ResponseData(
+                status_code=0,
+                headers={},
+                body="Error: Request timeout",
+                cookies={},
+                response_time=self.config.timeout * 1000,
+                url=url
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            if self.config.verbose:
+                print(f"  [ERROR] Connection failed: {e}")
+            return ResponseData(
+                status_code=0,
+                headers={},
+                body=f"Error: Connection failed - {str(e)}",
+                cookies={},
+                response_time=0.0,
+                url=url
+            )
+
+        except requests.exceptions.RequestException as e:
+            if self.config.verbose:
+                print(f"  [ERROR] Request failed: {e}")
+            return ResponseData(
+                status_code=0,
+                headers={},
+                body=f"Error: {str(e)}",
+                cookies={},
+                response_time=0.0,
+                url=url
+            )
     
     def _get_vulnerability_name(self, payload: HPPPayload) -> str:
         """Get vulnerability name based on payload type."""
@@ -343,19 +502,44 @@ class HPPScanner:
         """Perform context-aware analysis using Novel Component #2."""
         if self.config.verbose:
             print("[*] Performing context-aware analysis...")
-        
+
         # Start workflow tracking
-        self.context_tracker.start_workflow()
-        
-        # Add tested endpoints as workflow steps
-        for i, endpoint in enumerate(self.endpoints_tested):
+        self.context_tracker.start_workflow("HPP_Scan_Workflow")
+
+        # Add tested endpoints as workflow steps WITH response data
+        for i, workflow_item in enumerate(self.workflow_responses):
+            # Determine step type based on endpoint pattern
+            endpoint = workflow_item['url']
+            method = workflow_item['method']
+
+            # Infer step type from URL patterns
+            if '/login' in endpoint.lower() or '/auth' in endpoint.lower():
+                step_type = WorkflowStepType.LOGIN
+            elif method == 'POST' or '/update' in endpoint.lower() or '/edit' in endpoint.lower():
+                step_type = WorkflowStepType.UPDATE
+            elif '/delete' in endpoint.lower():
+                step_type = WorkflowStepType.DELETE
+            else:
+                step_type = WorkflowStepType.VIEW
+
             step = WorkflowStep(
-                name=f"Step_{i+1}",
-                step_type=WorkflowStepType.VIEW,
+                name=f"Step_{i+1}_{step_type.value}",
+                step_type=step_type,
                 endpoint=endpoint,
-                method="GET"
+                method=method
             )
-            self.context_tracker.add_step(step)
+
+            # Extract response data from ResponseData object
+            response = workflow_item['response']
+            response_data = {
+                'body': response.body,
+                'cookies': response.cookies,
+                'headers': response.headers,
+                'status_code': response.status_code
+            }
+
+            # Add step WITH response data (this is the critical fix!)
+            self.context_tracker.add_step(step, response_data)
         
         # Analyze for context-dependent vulnerabilities
         context_vulns = self.context_tracker.analyze_workflow()

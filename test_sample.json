@@ -1,0 +1,206 @@
+{
+  "metadata": {
+    "evaluation_date": "2025-11-30T00:56:03.897684",
+    "tranco_file": "top-1m.csv",
+    "total_tested": 10
+  },
+  "statistics": {
+    "total_tested": 10,
+    "successful_requests": 5,
+    "failed_requests": 5,
+    "frameworks_detected": {
+      "Unknown": 4,
+      "ASP.NET": 1
+    },
+    "confidence_distribution": {
+      "high": 0,
+      "medium": 1,
+      "low": 0,
+      "none": 4
+    },
+    "start_time": "2025-11-30T00:55:31.866923",
+    "end_time": "2025-11-30T00:56:03.897633"
+  },
+  "detailed_results": [
+    {
+      "domain": "softservecom.com",
+      "url": "https://softservecom.com",
+      "timestamp": "2025-11-30T00:55:31.866943",
+      "success": false,
+      "framework": null,
+      "confidence": 0.0,
+      "error": "SSL Error: HTTPSConnectionPool(host='softservecom.com', port=443): Max retries exceeded with url: / (Caused by ",
+      "response_time": 0.0,
+      "status_code": null,
+      "headers": {},
+      "has_server_header": false,
+      "has_powered_by": false,
+      "has_cookies": false,
+      "rank": 214930
+    },
+    {
+      "domain": "abhxs51.cn",
+      "url": "https://abhxs51.cn",
+      "timestamp": "2025-11-30T00:55:33.094731",
+      "success": false,
+      "framework": null,
+      "confidence": 0.0,
+      "error": "Connection Error: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))",
+      "response_time": 0.0,
+      "status_code": null,
+      "headers": {},
+      "has_server_header": false,
+      "has_powered_by": false,
+      "has_cookies": false,
+      "rank": 235699
+    },
+    {
+      "domain": "angusreid.org",
+      "url": "https://angusreid.org",
+      "timestamp": "2025-11-30T00:55:33.750938",
+      "success": true,
+      "framework": "Unknown",
+      "confidence": 0.0,
+      "error": null,
+      "response_time": 2714.078903198242,
+      "status_code": 403,
+      "headers": {
+        "Server": "cloudflare",
+        "X-Powered-By": "Not present",
+        "Content-Type": "text/html"
+      },
+      "has_server_header": true,
+      "has_powered_by": false,
+      "has_cookies": true,
+      "rank": 187226
+    },
+    {
+      "domain": "bioskopkeren.gg",
+      "url": "https://bioskopkeren.gg",
+      "timestamp": "2025-11-30T00:55:36.967637",
+      "success": true,
+      "framework": "Unknown",
+      "confidence": 0.0,
+      "error": null,
+      "response_time": 1980.046033859253,
+      "status_code": 200,
+      "headers": {
+        "Server": "cloudflare",
+        "X-Powered-By": "TERBIT21.COM",
+        "Content-Type": "text/html; charset=UTF-8"
+      },
+      "has_server_header": true,
+      "has_powered_by": true,
+      "has_cookies": false,
+      "rank": 781550
+    },
+    {
+      "domain": "naproxy.net",
+      "url": "https://naproxy.net",
+      "timestamp": "2025-11-30T00:55:39.464970",
+      "success": false,
+      "framework": null,
+      "confidence": 0.0,
+      "error": "Connection Error: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))",
+      "response_time": 0.0,
+      "status_code": null,
+      "headers": {},
+      "has_server_header": false,
+      "has_powered_by": false,
+      "has_cookies": false,
+      "rank": 952314
+    },
+    {
+      "domain": "silvanaeditoriale.it",
+      "url": "https://silvanaeditoriale.it",
+      "timestamp": "2025-11-30T00:55:40.036466",
+      "success": true,
+      "framework": "Unknown",
+      "confidence": 0.0,
+      "error": null,
+      "response_time": 9908.111095428467,
+      "status_code": 200,
+      "headers": {
+        "Server": "Apache",
+        "X-Powered-By": "Frequenze Software (www.frequenze.it) kirk",
+        "Content-Type": "text/html; charset=UTF-8"
+      },
+      "has_server_header": true,
+      "has_powered_by": true,
+      "has_cookies": true,
+      "rank": 621071
+    },
+    {
+      "domain": "matomesoku.jp",
+      "url": "https://matomesoku.jp",
+      "timestamp": "2025-11-30T00:55:50.462944",
+      "success": false,
+      "framework": null,
+      "confidence": 0.0,
+      "error": "SSL Error: HTTPSConnectionPool(host='matomesoku.jp', port=443): Max retries exceeded with url: / (Caused by SSL",
+      "response_time": 0.0,
+      "status_code": null,
+      "headers": {},
+      "has_server_header": false,
+      "has_powered_by": false,
+      "has_cookies": false,
+      "rank": 707038
+    },
+    {
+      "domain": "mymultistreams.com",
+      "url": "https://mymultistreams.com",
+      "timestamp": "2025-11-30T00:55:52.106073",
+      "success": true,
+      "framework": "ASP.NET",
+      "confidence": 0.43333333333333335,
+      "error": null,
+      "response_time": 3058.1958293914795,
+      "status_code": 200,
+      "headers": {
+        "Server": "cloudflare",
+        "X-Powered-By": "ASP.NET",
+        "Content-Type": "text/html; charset=utf-8"
+      },
+      "has_server_header": true,
+      "has_powered_by": true,
+      "has_cookies": true,
+      "rank": 92333
+    },
+    {
+      "domain": "youzik.app",
+      "url": "https://youzik.app",
+      "timestamp": "2025-11-30T00:55:55.669008",
+      "success": false,
+      "framework": null,
+      "confidence": 0.0,
+      "error": "Connection Error: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))",
+      "response_time": 0.0,
+      "status_code": null,
+      "headers": {},
+      "has_server_header": false,
+      "has_powered_by": false,
+      "has_cookies": false,
+      "rank": 853229
+    },
+    {
+      "domain": "icodrops.com",
+      "url": "https://icodrops.com",
+      "timestamp": "2025-11-30T00:56:01.205088",
+      "success": true,
+      "framework": "Unknown",
+      "confidence": 0.0,
+      "error": null,
+      "response_time": 2172.801733016968,
+      "status_code": 200,
+      "headers": {
+        "Server": "nginx",
+        "X-Powered-By": "Not present",
+        "Content-Type": "text/html; charset=utf-8"
+      },
+      "has_server_header": true,
+      "has_powered_by": false,
+      "has_cookies": true,
+      "rank": 52890
+    }
+  ]
+}
