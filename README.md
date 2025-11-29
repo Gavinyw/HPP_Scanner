@@ -10,14 +10,6 @@
 
 A next-generation HTTP Parameter Pollution (HPP) vulnerability scanner that goes beyond basic detection to provide **context-aware analysis** and **impact-based severity scoring**.
 
-### What Makes This Tool Different?
-
-| Feature | Existing Tools | Our Tool |
-|---------|---------------|----------|
-| HPP Detection | Basic/Manual | ✅ Automated |
-| Context-Aware | ❌ Single Request | ✅ Multi-Step Workflow |
-| Framework-Specific | ❌ Generic | ✅ Django/Flask/Express/PHP |
-| Impact Scoring | Generic "Low" | ✅ CVSS-Based Calculation |
 
 ## Novel Components
 
