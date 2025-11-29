@@ -79,8 +79,8 @@ score = scorer.calculate_score(metrics)
 
 ```bash
 # Clone repository
-git clone https://github.com/hpp-team/hpp-scanner.git
-cd hpp-scanner
+git clone https://github.com/Gavinyw/HPP_Scanner.git
+cd HPP_Scanner
 
 # Install package
 pip install -e .
