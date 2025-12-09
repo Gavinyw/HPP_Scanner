@@ -165,7 +165,7 @@ class FrameworkDetector:
     def __init__(self, http_client=None):
         """
         Initialize detector.
-        
+
         Args:
             http_client: HTTP client for making requests (optional)
         """
@@ -173,55 +173,82 @@ class FrameworkDetector:
         self.detection_results: Dict[str, float] = {}
         self.detected_framework: Optional[Framework] = None
         self.confidence: float = 0.0
+        self.active_fingerprinting_enabled: bool = True  # Enable active testing
         
-    def detect(self, target_url: str, response_data: Dict = None) -> Tuple[Framework, float]:
+    def detect(self, target_url: str, response_data: Dict = None, make_request_func=None) -> Tuple[Framework, float]:
         """
         Detect framework using multiple methods.
-        
+
         Args:
             target_url: Target URL to analyze
             response_data: Optional pre-fetched response data
-            
+            make_request_func: Optional function to make HTTP requests for active fingerprinting
+
         Returns:
             Tuple of (Framework, confidence_score)
         """
         scores = {fw: 0.0 for fw in Framework}
-        
+        passive_max_score = 0.0  # Track best passive detection score
+
+        # PASSIVE DETECTION (from response data)
         if response_data:
             # Analyze provided response data
             if 'headers' in response_data:
                 header_scores = self._analyze_headers(response_data['headers'])
                 for fw, score in header_scores.items():
                     scores[fw] += score * 0.4  # 40% weight
-                    
+
             if 'body' in response_data:
                 body_scores = self._analyze_body(response_data['body'])
                 for fw, score in body_scores.items():
                     scores[fw] += score * 0.3  # 30% weight
-                    
+
             if 'cookies' in response_data:
                 cookie_scores = self._analyze_cookies(response_data['cookies'])
                 for fw, score in cookie_scores.items():
                     scores[fw] += score * 0.2  # 20% weight
-                    
+
             if 'behavior' in response_data:
                 behavior_scores = self._analyze_behavior(response_data['behavior'])
                 for fw, score in behavior_scores.items():
                     scores[fw] += score * 0.1  # 10% weight
-        
+
+            passive_max_score = max(scores.values()) if scores else 0.0
+
+        # ACTIVE FINGERPRINTING (if enabled and passive detection failed or has low confidence)
+        # WHY: If passive detection found nothing (headers/cookies hidden), try active tests
+        # WHEN: Only if make_request_func provided and (no passive data OR low confidence)
+        if (self.active_fingerprinting_enabled and
+            make_request_func and
+            passive_max_score < 0.5):  # Only if passive detection uncertain
+
+            active_scores = self.active_fingerprint(target_url, make_request_func)
+
+            # Combine active scores with passive scores
+            # WHY: Active tests are weighted MORE when passive fails
+            for fw, active_score in active_scores.items():
+                # If passive found nothing, active tests dominate (80% weight)
+                # If passive found something weak, blend them (50/50)
+                if passive_max_score < 0.1:
+                    scores[fw] = active_score * 0.8 + scores[fw] * 0.2
+                else:
+                    scores[fw] = active_score * 0.6 + scores[fw] * 0.4
+
         # Find best match
         best_framework = max(scores, key=scores.get)
         confidence = scores[best_framework]
-        
+
         # If confidence too low, mark as unknown
-        if confidence < 0.3:
+        # WHY lower threshold to 0.2: With active fingerprinting, even weak signals
+        # (like 1-2 header matches) can be valuable when combined with active tests
+        if confidence < 0.2:
             best_framework = Framework.UNKNOWN
             confidence = 0.0
-            
+
         self.detected_framework = best_framework
         self.confidence = confidence
         self.detection_results = scores
-        
+
         return best_framework, confidence
     
     def _analyze_headers(self, headers: Dict[str, str]) -> Dict[Framework, float]:
@@ -302,7 +329,7 @@ class FrameworkDetector:
     def get_parameter_behavior(self) -> str:
         """
         Get expected parameter handling behavior for detected framework.
-        
+
         Returns:
             'first': Uses first parameter value
             'last': Uses last parameter value
@@ -313,6 +340,179 @@ class FrameworkDetector:
         if self.detected_framework and self.detected_framework in FRAMEWORK_SIGNATURES:
             return FRAMEWORK_SIGNATURES[self.detected_framework].parameter_behavior
         return 'unknown'
+
+    def active_fingerprint(self, target_url: str, make_request_func) -> Dict[str, float]:
+        """
+        Perform active fingerprinting by probing the server.
+
+        WHY THIS WORKS: Production sites hide headers/cookies but can't hide
+        how they behave. We actively test their behavior patterns.
+
+        Args:
+            target_url: Base URL to test
+            make_request_func: Function to make HTTP requests
+
+        Returns:
+            Dict mapping Framework to confidence scores
+        """
+        scores = {fw: 0.0 for fw in Framework}
+
+        # Test 1: 404 Error Page Fingerprinting (HIGHEST ACCURACY)
+        # WHY: Each framework has distinctive error messages they can't hide
+        error_scores = self._test_404_page(target_url, make_request_func)
+        for fw, score in error_scores.items():
+            scores[fw] += score * 0.4  # 40% weight - very reliable
+
+        # Test 2: Django Admin Path Detection (HIGH CONFIDENCE)
+        # WHY: Many sites forget to disable /admin/ even in production
+        admin_scores = self._test_admin_paths(target_url, make_request_func)
+        for fw, score in admin_scores.items():
+            scores[fw] += score * 0.35  # 35% weight - if found, very sure
+
+        # Test 3: Duplicate Parameter Behavior Testing (MEDIUM ACCURACY)
+        # WHY: Tests actual parameter handling logic of the framework
+        param_scores = self._test_duplicate_params(target_url, make_request_func)
+        for fw, score in param_scores.items():
+            scores[fw] += score * 0.25  # 25% weight - good but can be ambiguous
+
+        return scores
+
+    def _test_404_page(self, target_url: str, make_request_func) -> Dict[Framework, float]:
+        """
+        Test 404 error page patterns.
+
+        WHY: Error pages reveal framework info even when headers are stripped.
+        Django says "Page not found (404)", Flask shows Werkzeug errors,
+        Express says "Cannot GET /path", PHP shows server errors.
+        """
+        from urllib.parse import urljoin
+        scores = {fw: 0.0 for fw in Framework}
+
+        try:
+            # Request a non-existent path
+            nonexistent_url = urljoin(target_url, '/hpp_scanner_test_nonexistent_12345')
+            response = make_request_func(nonexistent_url, 'GET', {})
+
+            if response.status_code == 0:
+                return scores  # Connection failed
+
+            body = response.body.lower()
+
+            # Django patterns
+            if 'page not found (404)' in body or 'page not found</h1>' in body:
+                scores[Framework.DJANGO] = 0.8  # High confidence
+            elif 'django' in body and '404' in body:
+                scores[Framework.DJANGO] = 0.5
+
+            # Flask/Werkzeug patterns
+            if 'werkzeug' in body or 'debugger' in body:
+                scores[Framework.FLASK] = 0.9
+            elif 'the requested url was not found' in body:
+                scores[Framework.FLASK] = 0.4
+
+            # Express/Node.js patterns
+            if 'cannot get' in body or 'cannot post' in body:
+                scores[Framework.EXPRESS] = 0.7
+            elif 'express' in body and '404' in body:
+                scores[Framework.EXPRESS] = 0.5
+
+            # PHP patterns
+            if 'notice:' in body or 'warning:' in body or 'fatal error:' in body:
+                scores[Framework.PHP] = 0.6
+            elif '<?php' in body:
+                scores[Framework.PHP] = 0.8
+
+        except Exception:
+            pass  # Ignore errors, return empty scores
+
+        return scores
+
+    def _test_admin_paths(self, target_url: str, make_request_func) -> Dict[Framework, float]:
+        """
+        Test common admin/framework-specific paths.
+
+        WHY: Django admin is enabled by default and many developers forget to
+        disable it. Finding /admin/ is a smoking gun for Django.
+        """
+        from urllib.parse import urljoin
+        scores = {fw: 0.0 for fw in Framework}
+
+        # Django admin paths
+        django_paths = [
+            '/admin/',
+            '/admin/login/',
+            '/static/admin/css/base.css'
+        ]
+
+        try:
+            for path in django_paths:
+                test_url = urljoin(target_url, path)
+                response = make_request_func(test_url, 'GET', {})
+
+                if response.status_code == 0:
+                    continue
+
+                # Django admin found
+                if response.status_code in [200, 302]:  # 200 OK or 302 redirect to login
+                    body_lower = response.body.lower()
+                    if 'django' in body_lower or 'csrfmiddlewaretoken' in body_lower:
+                        scores[Framework.DJANGO] = 0.9  # Very high confidence!
+                        break
+                    elif path == '/admin/' and response.status_code == 302:
+                        scores[Framework.DJANGO] = 0.7  # Admin exists, likely Django
+                        break
+
+        except Exception:
+            pass
+
+        return scores
+
+    def _test_duplicate_params(self, target_url: str, make_request_func) -> Dict[Framework, float]:
+        """
+        Test how server handles duplicate parameters.
+
+        WHY: This tests the ACTUAL framework behavior - Django uses last value,
+        Flask uses first, Express creates array. Can't be hidden.
+        """
+        scores = {fw: 0.0 for fw in Framework}
+
+        try:
+            # Create test URL with duplicate params
+            # We use a parameter name unlikely to exist
+            test_params = [
+                ('hpp_test_param', 'first_value'),
+                ('hpp_test_param', 'last_value')
+            ]
+
+            response = make_request_func(target_url, 'GET', test_params)
+
+            if response.status_code == 0:
+                return scores
+
+            body = response.body
+
+            # Check which value appears in response
+            has_first = 'first_value' in body
+            has_last = 'last_value' in body
+            has_array = ('[' in body and ']' in body and
+                        'first_value' in body and 'last_value' in body)
+
+            if has_array:
+                # Express creates array
+                scores[Framework.EXPRESS] = 0.6
+            elif has_last and not has_first:
+                # Django/PHP use last value
+                scores[Framework.DJANGO] = 0.4
+                scores[Framework.PHP] = 0.4
+            elif has_first and not has_last:
+                # Flask uses first value
+                scores[Framework.FLASK] = 0.5
+            # If both appear, could be reflected in error message - inconclusive
+
+        except Exception:
+            pass
+
+        return scores
     
     def get_detection_report(self) -> Dict:
         """Generate detailed detection report."""

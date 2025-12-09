@@ -43,6 +43,7 @@ setup(
         "requests>=2.28.0",
         "beautifulsoup4>=4.12.0",
         "lxml>=4.9.0",
+        "flask>=3.0.0",  # For vulnerable demo app
     ],
     extras_require={
         "dev": [

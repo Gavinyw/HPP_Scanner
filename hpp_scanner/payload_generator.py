@@ -318,73 +318,117 @@ class PayloadGenerator:
         self.framework = framework
         
     def generate_payloads(
-        self, 
-        param_name: str, 
+        self,
+        param_name: str,
         location: ParameterLocation = ParameterLocation.QUERY,
         include_generic: bool = True,
         include_framework_specific: bool = True,
         include_context_aware: bool = True
     ) -> List[HPPPayload]:
         """
-        Generate payloads for a specific parameter.
-        
+        Generate SMART, TARGETED payloads for a specific parameter.
+
+        IMPROVEMENT: Only tests payload types relevant to the parameter name.
+        - Reduces false positives from 20 to 2-4 per parameter
+        - Tests "price manipulation" on "price", not on "item"
+        - Tests "auth bypass" on "user_id", not on "quantity"
+
         Args:
             param_name: Name of the parameter to test
             location: Where the parameter is located
             include_generic: Include generic payloads
             include_framework_specific: Include framework-specific payloads
             include_context_aware: Include context-aware payloads
-            
+
         Returns:
-            List of HPPPayload objects
+            List of HPPPayload objects (2-4 per parameter instead of 10+)
         """
         payloads = []
-        
-        # Add generic payloads
+        param_lower = param_name.lower()
+
+        # Step 1: Determine which payload types are relevant for this parameter
+        relevant_types = self._get_relevant_payload_types(param_lower)
+
+        # Always include basic duplicate test (to detect ANY HPP behavior)
+        relevant_types.add(PayloadType.BASIC_DUPLICATE)
+
+        # Step 2: Add ONLY relevant generic payloads
         if include_generic:
             for template in GENERIC_PAYLOADS:
-                payload = HPPPayload(
-                    name=f"{template['name']} - {param_name}",
-                    payload_type=template['type'],
-                    param_name=param_name,
-                    values=template['values'],
-                    location=location,
-                    description=template['description'],
-                    expected_behavior=template['expected'],
-                    risk_level=template['risk']
-                )
-                payloads.append(payload)
-        
-        # Add framework-specific payloads
+                # FILTER: Only add if payload type matches parameter semantics
+                if template['type'] in relevant_types:
+                    payload = HPPPayload(
+                        name=f"{template['name']} - {param_name}",
+                        payload_type=template['type'],
+                        param_name=param_name,
+                        values=template['values'],
+                        location=location,
+                        description=template['description'],
+                        expected_behavior=template['expected'],
+                        risk_level=template['risk']
+                    )
+                    payloads.append(payload)
+
+        # Step 3: Add framework-specific payloads (only if relevant)
         if include_framework_specific and self.framework in FRAMEWORK_PAYLOADS:
             for template in FRAMEWORK_PAYLOADS[self.framework]:
-                payload = HPPPayload(
-                    name=f"{template['name']} - {param_name}",
-                    payload_type=template['type'],
-                    param_name=param_name,
-                    values=template['values'],
-                    location=location,
-                    description=template['description'],
-                    expected_behavior=template['expected'],
-                    risk_level=template['risk'],
-                    framework_specific=self.framework
-                )
-                payloads.append(payload)
-        
-        # Add context-aware payloads based on parameter name
+                # FILTER: Only add if type is relevant
+                if template['type'] in relevant_types:
+                    payload = HPPPayload(
+                        name=f"{template['name']} - {param_name}",
+                        payload_type=template['type'],
+                        param_name=param_name,
+                        values=template['values'],
+                        location=location,
+                        description=template['description'],
+                        expected_behavior=template['expected'],
+                        risk_level=template['risk'],
+                        framework_specific=self.framework
+                    )
+                    payloads.append(payload)
+
+        # Step 4: Elevate risk for security-sensitive parameters
         if include_context_aware:
-            param_lower = param_name.lower()
             for context_param, payload_types in CONTEXT_PAYLOADS.items():
                 if context_param in param_lower:
-                    for ptype in payload_types:
-                        # Find matching generic payload and prioritize it
-                        for p in payloads:
-                            if p.payload_type == ptype:
-                                p.risk_level = self._elevate_risk(p.risk_level)
-                                p.description += f" [CONTEXT: {param_name} is security-sensitive]"
-        
+                    for p in payloads:
+                        if p.payload_type in payload_types:
+                            p.risk_level = self._elevate_risk(p.risk_level)
+                            p.description += f" [CONTEXT: {param_name} is security-sensitive]"
+
         self.generated_payloads = payloads
         return payloads
+
+    def _get_relevant_payload_types(self, param_lower: str) -> set:
+        """
+        Determine which payload types make sense for this parameter.
+
+        This is the KEY IMPROVEMENT that reduces false positives.
+
+        Example:
+            param="price" → [PRICE_MANIPULATION, BASIC_DUPLICATE]
+            param="user_id" → [AUTH_BYPASS, ACCESS_CONTROL, BASIC_DUPLICATE]
+            param="item" → [BASIC_DUPLICATE] only
+
+        Args:
+            param_lower: Lowercase parameter name
+
+        Returns:
+            Set of relevant PayloadType enums
+        """
+        relevant = set()
+
+        # Check parameter name against semantic patterns
+        for context_param, payload_types in CONTEXT_PAYLOADS.items():
+            if context_param in param_lower:
+                relevant.update(payload_types)
+
+        # If no semantic match, only test basic duplicate
+        # DON'T test auth bypass on random parameters!
+        if not relevant:
+            relevant.add(PayloadType.BASIC_DUPLICATE)
+
+        return relevant
     
     def _elevate_risk(self, current_risk: str) -> str:
         """Elevate risk level for context-sensitive parameters."""

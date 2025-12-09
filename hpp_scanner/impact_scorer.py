@@ -216,10 +216,11 @@ class ImpactScorer:
         ac = self.ATTACK_COMPLEXITY_WEIGHTS[metrics.attack_complexity]
         pr = self.PRIVILEGES_REQUIRED_WEIGHTS[metrics.privileges_required]
         ui = self.USER_INTERACTION_WEIGHTS[metrics.user_interaction]
-        
-        # Exploitability = 8.22 × AV × AC × PR × UI (CVSS formula)
-        exploitability = 8.22 * av * ac * pr * ui / 10  # Normalize to 0-1
-        
+
+        # Exploitability = 8.22 × AV × AC × PR × UI (CVSS v3.1 formula)
+        # Result range: 0-8.22 (not normalized)
+        exploitability = 8.22 * av * ac * pr * ui
+
         breakdown = {
             'attack_vector': round(av, 2),
             'attack_complexity': round(ac, 2),
@@ -227,7 +228,7 @@ class ImpactScorer:
             'user_interaction': round(ui, 2),
             'formula': '8.22 × AV × AC × PR × UI'
         }
-        
+
         return exploitability, breakdown
     
     def _calculate_impact(self, metrics: VulnerabilityMetrics) -> Tuple[float, Dict]:
@@ -375,56 +376,106 @@ class ImpactScorer:
     def score_from_vulnerability_data(self, vuln_data: Dict) -> ImpactScore:
         """
         Calculate score from vulnerability dictionary.
-        
+
+        IMPROVED LOGIC: Sets meaningful CIA impact based on:
+        1. Parameter name semantics (price → HIGH integrity)
+        2. Vulnerability type (auth bypass → HIGH confidentiality)
+        3. Real-world exploitability
+
         Args:
             vuln_data: Dictionary with vulnerability details
-            
+
         Returns:
-            Calculated impact score
+            Calculated impact score with meaningful CVSS values
         """
+        param_name = vuln_data.get('parameter', '').lower()
+        param_type = vuln_data.get('parameter_type', '').lower()
+        vuln_type = vuln_data.get('type', '').lower()
+
         metrics = VulnerabilityMetrics(
-            parameter_name=vuln_data.get('parameter', ''),
-            parameter_type=vuln_data.get('parameter_type', ''),
+            parameter_name=param_name,
+            parameter_type=param_type,
             workflow_steps=vuln_data.get('workflow_steps', 1)
         )
-        
-        # Set attack vector
+
+        # Set privileges required
         if vuln_data.get('requires_auth', False):
             metrics.privileges_required = PrivilegesRequired.LOW
-        
+
         if vuln_data.get('requires_admin', False):
             metrics.privileges_required = PrivilegesRequired.HIGH
-            
+
         if vuln_data.get('requires_user_action', False):
             metrics.user_interaction = UserInteraction.REQUIRED
-            
-        # Set impact based on vulnerability type
-        vuln_type = vuln_data.get('type', '').lower()
-        
-        if 'auth' in vuln_type or 'authentication' in vuln_type:
-            metrics.affects_authentication = True
+
+        # IMPROVEMENT 1: Set impact based on PARAMETER SEMANTICS (not just vuln type)
+        # This fixes the "0 impact" problem
+
+        # Financial parameters → HIGH integrity impact
+        if any(x in param_name for x in ['price', 'amount', 'total', 'cost', 'quantity', 'discount']):
+            metrics.affects_financial = True
+            metrics.integrity_impact = ImpactLevel.HIGH
+            metrics.confidentiality_impact = ImpactLevel.LOW  # Can see prices
+
+        # User identity parameters → HIGH confidentiality + integrity
+        if any(x in param_name for x in ['user_id', 'uid', 'user', 'account', 'id']):
+            metrics.affects_data_access = True
             metrics.confidentiality_impact = ImpactLevel.HIGH
             metrics.integrity_impact = ImpactLevel.HIGH
-            
-        if 'privilege' in vuln_type or 'authorization' in vuln_type or 'escalation' in vuln_type:
+
+        # Role/permission parameters → CRITICAL (all CIA)
+        if any(x in param_name for x in ['role', 'permission', 'admin', 'access', 'level']):
             metrics.affects_authorization = True
             metrics.confidentiality_impact = ImpactLevel.HIGH
             metrics.integrity_impact = ImpactLevel.HIGH
-            
+            metrics.availability_impact = ImpactLevel.LOW
+
+        # Auth tokens → HIGH confidentiality
+        if any(x in param_name for x in ['token', 'auth', 'session', 'key', 'api_key']):
+            metrics.affects_authentication = True
+            metrics.confidentiality_impact = ImpactLevel.HIGH
+            metrics.integrity_impact = ImpactLevel.HIGH
+
+        # IMPROVEMENT 2: ALSO consider vulnerability type
+        if 'auth' in vuln_type or 'authentication' in vuln_type:
+            metrics.affects_authentication = True
+            if metrics.confidentiality_impact == ImpactLevel.NONE:
+                metrics.confidentiality_impact = ImpactLevel.HIGH
+            if metrics.integrity_impact == ImpactLevel.NONE:
+                metrics.integrity_impact = ImpactLevel.HIGH
+
+        if 'privilege' in vuln_type or 'authorization' in vuln_type or 'escalation' in vuln_type:
+            metrics.affects_authorization = True
+            if metrics.confidentiality_impact == ImpactLevel.NONE:
+                metrics.confidentiality_impact = ImpactLevel.HIGH
+            if metrics.integrity_impact == ImpactLevel.NONE:
+                metrics.integrity_impact = ImpactLevel.HIGH
+
         if 'price' in vuln_type or 'financial' in vuln_type or 'payment' in vuln_type:
             metrics.affects_financial = True
-            metrics.integrity_impact = ImpactLevel.HIGH
-            
+            if metrics.integrity_impact == ImpactLevel.NONE:
+                metrics.integrity_impact = ImpactLevel.HIGH
+
         if 'access' in vuln_type or 'data' in vuln_type:
             metrics.affects_data_access = True
-            metrics.confidentiality_impact = ImpactLevel.HIGH
-        
+            if metrics.confidentiality_impact == ImpactLevel.NONE:
+                metrics.confidentiality_impact = ImpactLevel.HIGH
+
+        # IMPROVEMENT 3: Default to at least LOW impact for any detected HPP
+        # (If HPP is detected, it means SOMETHING changed - that's at least LOW impact)
+        if metrics.confidentiality_impact == ImpactLevel.NONE and \
+           metrics.integrity_impact == ImpactLevel.NONE and \
+           metrics.availability_impact == ImpactLevel.NONE:
+            # Basic HPP with unknown impact
+            metrics.integrity_impact = ImpactLevel.LOW
+
+        # Set additional flags
         if vuln_data.get('multi_step', False):
             metrics.multi_step_required = True
-            
+
         if vuln_data.get('framework_dependent', False):
             metrics.framework_dependent = True
-        
+
         return self.calculate_score(metrics)
     
     def prioritize_vulnerabilities(self, vulnerabilities: List[Dict]) -> List[Dict]:
